@@ -117,7 +117,7 @@ def get_image_description_from_openai(image_bytes, prompt_text, api_key, identif
         return f"OpenAI error for {identifier}: {e}", ""
 
 # --- Streamlit UI Setup ---
-st.set_page_config(page_title="PDF Image Analyzer with OpenAI GPT-4o", page_icon="📄", layout="wide")
+st.set_page_config(page_title="PDF Image Analyzer with OpenAI GPT-4.1-mini", page_icon="📄", layout="wide")
 st.title("📄 PDF Image Analyzer with OpenAI GPT-4o")
 st.markdown("Upload a PDF to extract images and get detailed descriptions using OpenAI's vision model.")
 

@@ -25,6 +25,7 @@ jobs:
 
             # Pull latest changes
             git pull origin main
+            echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > .env
 
             # Optional: activate virtual environment
             source venv/bin/activate || python3 -m venv venv && source venv/bin/activate

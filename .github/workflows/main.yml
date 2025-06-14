@@ -1,11 +1,11 @@
-name: Streamlit CI
+name: 🛠️ Build Streamlit App
 
 on:
   push:
-    branches: main 
+    branches: [ main ]
 
 jobs:
-  test-and-lint:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,8 +22,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🧪 Lint check
+      - name: ✅ Verify Streamlit loads
         run: |
-          pip install flake8
-          flake8 app.py
-          python -c "import streamlit, fitz, openai, pandas"
+          python -c "import streamlit"

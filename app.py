@@ -10,7 +10,7 @@ import openai
 from dotenv import load_dotenv
 load_dotenv()
 
-# -- API Key Handling --
+# --- API Key Handling ---
 def get_openai_api_key():
     env_key = os.getenv("OPENAI_API_KEY")
     if env_key:

@@ -23,7 +23,7 @@ jobs:
             # Go to the app directory
             cd ~/Alt-Text
 
-            # Pull latest changes
+            # Pull latest change
             git pull origin main
             echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > .env
 

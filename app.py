@@ -186,7 +186,7 @@ if uploaded_file and (uploaded_file.name != st.session_state.uploaded_pdf_name o
 
                 left_col, right_col = st.columns([1, 2])
                 with left_col:
-                    st.image(item['image_bytes'], caption=identifier, use_column_width=True)
+                    st.image(item['image_bytes'], caption=identifier, use_container_width=True)
                 with right_col:
                     st.markdown(f"**Short Alt Text:** {description_short}")
                     st.markdown(f"**Long Alt Text:** {description_long}")

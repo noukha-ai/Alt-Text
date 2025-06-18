@@ -8,43 +8,21 @@ import time
 import pandas as pd
 import openai
 from dotenv import load_dotenv
-import logging
-
-# -- Configure Logging --
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('app.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-logger.info("Starting PDF Image Analyzer application")
+load_dotenv()
 
 # --- API Key Handling ---
 def get_openai_api_key():
     env_key = os.getenv("OPENAI_API_KEY")
     if env_key:
-        logger.info("API key retrieved from environment variable")
         return env_key
-    logger.info("API key retrieved from session state input")
     return st.session_state.api_key_input_value
 
 # --- Session State Initialization ---
 for key in [
     'uploaded_pdf_name', 'extracted_images', 'analysis_results',
-    'api_key_input_value', 'custom_prompt', 'current_page', 'batch_size']:
+    'api_key_input_value', 'custom_prompt']:
     if key not in st.session_state:
-        if 'results' in key or 'images' in key:
-            st.session_state[key] = []
-        elif key == 'batch_size':
-            st.session_state[key] = 10
-        elif key == 'current_page':
-            st.session_state[key] = 0
-        else:
-            st.session_state[key] = ""
+        st.session_state[key] = [] if 'results' in key or 'images' in key else ""
 
 # --- Default Prompt ---
 DEFAULT_PROMPT = (
@@ -56,27 +34,27 @@ DEFAULT_PROMPT = (
 
 # --- Extract Images from PDF ---
 @st.cache_data
-
-def extract_images_for_analysis(pdf_bytes, start_page=0, end_page=None):
+def extract_images_for_analysis(pdf_bytes):
     extracted_data = []
     try:
         pdf_file = fitz.open(stream=pdf_bytes, filetype="pdf")
-        total_pages = len(pdf_file)
-        if end_page is None:
-            end_page = total_pages
     except Exception as e:
         st.error(f"Error opening PDF: {e}")
         return []
 
-    for page_number in range(start_page, min(end_page, total_pages)):
+    for page_number in range(len(pdf_file)):
         page = pdf_file[page_number]
         images = page.get_images(full=True)
+        if not images:
+            continue
+
         for img_index, img in enumerate(images):
             xref = img[0]
             try:
                 base_image = pdf_file.extract_image(xref)
                 image_bytes = base_image["image"]
                 image_ext = (base_image.get("ext") or "").lower()
+
                 mime_type = f"image/{image_ext}" if image_ext else "image/png"
                 if mime_type == "image/jpg":
                     mime_type = "image/jpeg"
@@ -96,11 +74,12 @@ def extract_images_for_analysis(pdf_bytes, start_page=0, end_page=None):
 # --- OpenAI Vision Analysis ---
 def get_image_description_from_openai(image_bytes, prompt_text, api_key, identifier=""):
     if not api_key:
-        return "ERROR: OpenAI API Key not provided.", ""
+        return "ERROR: OpenAI API Key not provided."
     if not prompt_text:
-        return "ERROR: Analysis prompt cannot be empty.", ""
+        return "ERROR: Analysis prompt cannot be empty."
 
     openai.api_key = api_key
+
     try:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         image_url = f"data:image/jpeg;base64,{base64_image}"
@@ -121,6 +100,8 @@ def get_image_description_from_openai(image_bytes, prompt_text, api_key, identif
         )
 
         full_content = response.choices[0].message.content.strip()
+
+        # Extract summary if available
         summary_marker = "Summary:"
         if summary_marker in full_content:
             parts = full_content.split(summary_marker, 1)
@@ -136,77 +117,96 @@ def get_image_description_from_openai(image_bytes, prompt_text, api_key, identif
         return f"OpenAI error for {identifier}: {e}", ""
 
 # --- Streamlit UI Setup ---
-st.set_page_config(page_title="PDF Image Analyzer", page_icon="📄", layout="wide")
-st.title("📄 PDF Image Analyzer (Batch Mode)")
-st.markdown("Upload a PDF and analyze its images using OpenAI's vision model, 10 pages at a time.")
+st.set_page_config(page_title="PDF Image Analyzer with OpenAI GPT-4.1-mini", page_icon="📄", layout="wide")
+st.title("📄 PDF Image Analyzer with OpenAI GPT-4.1")
+st.markdown("Upload a PDF to extract images and get detailed descriptions using OpenAI's vision model.")
 
-# --- Sidebar Config ---
+excel_download_placeholder = st.empty()
+
+# --- Sidebar ---
 with st.sidebar:
     st.header("🔑 Configuration")
-    api_key_input = st.text_input("OpenAI API Key", type="password", value=st.session_state.api_key_input_value)
+    api_key_input = st.text_input("OpenAI API Key", type="password",
+                                  value=st.session_state.api_key_input_value,
+                                  placeholder="Enter OpenAI API key")
     st.session_state.api_key_input_value = api_key_input
+
+    st.markdown("### API Key Source")
+    current_api_key_check = get_openai_api_key()
+    if current_api_key_check and current_api_key_check == os.getenv("OPENAI_API_KEY"):
+        st.info("API Key Source: Environment Variable")
+    elif api_key_input:
+        st.info("API Key Source: Manual Input")
+    else:
+        st.warning("API Key Source: None")
 
 # --- Prompt Input ---
 st.subheader("📝 Analysis Prompt")
-st.session_state.custom_prompt = st.text_area("Enter your prompt for image analysis:",
-    value=st.session_state.custom_prompt or DEFAULT_PROMPT, height=150)
+st.session_state.custom_prompt = st.text_area(
+    "Enter your prompt for image analysis:",
+    value=st.session_state.custom_prompt or DEFAULT_PROMPT,
+    height=150
+)
 
 # --- File Upload ---
 uploaded_file = st.file_uploader("📎 Upload a PDF", type="pdf")
 
-if uploaded_file:
-    pdf_bytes = uploaded_file.read()
-    total_pages = fitz.open(stream=pdf_bytes, filetype="pdf").page_count
-    current_page = st.session_state.current_page
-    batch_size = st.session_state.batch_size
-    next_page = min(current_page + batch_size, total_pages)
+if uploaded_file and (uploaded_file.name != st.session_state.uploaded_pdf_name or not st.session_state.extracted_images):
+    st.session_state.uploaded_pdf_name = uploaded_file.name
+    st.session_state.extracted_images = []
+    st.session_state.analysis_results = []
 
-    st.markdown(f"**Processing pages {current_page + 1} to {next_page} of {total_pages}**")
+    current_api_key = get_openai_api_key()
+    current_analysis_prompt = st.session_state.custom_prompt
 
-    if st.button("▶️ Process This Batch"):
-        with st.spinner("Extracting and analyzing images..."):
-            extracted = extract_images_for_analysis(pdf_bytes, start_page=current_page, end_page=next_page)
+    if current_api_key and current_analysis_prompt:
+        pdf_bytes = uploaded_file.read()
 
-            if extracted:
-                api_key = get_openai_api_key()
-                prompt = st.session_state.custom_prompt
-                my_bar = st.progress(0, text="Analyzing images...")
+        with st.spinner("Extracting images from PDF..."):
+            st.session_state.extracted_images = extract_images_for_analysis(pdf_bytes)
 
-                for i, item in enumerate(extracted):
-                    identifier = f"Page {item['page_number']} Image {item['image_index']}"
-                    long, short = get_image_description_from_openai(
-                        item['image_bytes'], prompt, api_key, identifier
-                    )
-                    st.session_state.analysis_results.append({
-                        'Page Number': item['page_number'],
-                        'Alt Short Text': short,
-                        'Alt Long Text': long
-                    })
+        if st.session_state.extracted_images:
+            st.subheader("🔍 Image Analysis Results")
+            my_bar = st.progress(0, text="Analyzing images...")
 
-                    my_bar.progress((i + 1) / len(extracted), text=f"Analyzing {identifier}...")
+            for i, item in enumerate(st.session_state.extracted_images):
+                identifier = f"Page {item['page_number']} Image {item['image_index']}"
 
-                my_bar.empty()
-                st.session_state.current_page = next_page
-                st.success(f"✅ Batch {current_page + 1}–{next_page} processed.")
+                description_long, description_short = get_image_description_from_openai(
+                    item['image_bytes'], current_analysis_prompt, current_api_key, identifier
+                )
 
-# --- Final Download Option ---
-if st.session_state.analysis_results and st.session_state.current_page >= total_pages:
-    st.subheader("📥 Download Complete Results")
+                st.session_state.analysis_results.append({
+                    'Page Number': item['page_number'],
+                    'Alt Short Text': description_short,
+                    'Alt Long Text': description_long
+                })
+
+                my_bar.progress((i + 1) / len(st.session_state.extracted_images), text=f"Analyzing {identifier}...")
+
+                left_col, right_col = st.columns([1, 2])
+                with left_col:
+                    st.image(item['image_bytes'], caption=identifier, use_container_width=True)
+                with right_col:
+                    st.markdown(f"**Short Alt Text:** {description_short}")
+                    st.markdown(f"**Long Alt Text:** {description_long}")
+
+                time.sleep(0.4)
+
+            my_bar.empty()
+            st.success("✅ Image analysis complete!")
+
+# --- Excel Download ---
+if st.session_state.analysis_results:
     df = pd.DataFrame(st.session_state.analysis_results)
     excel_buffer = io.BytesIO()
     df.to_excel(excel_buffer, index=False)
     excel_buffer.seek(0)
 
-    st.download_button(
-        label="Download Full Analysis (Excel)",
-        data=excel_buffer,
-        file_name="full_image_analysis.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-# --- Reset Option ---
-if st.button("🔁 Reset Analysis"):
-    st.session_state.current_page = 0
-    st.session_state.analysis_results = []
-    st.session_state.extracted_images = []
-    st.success("Session reset. You can reprocess the PDF now.")
+    excel_download_placeholder.markdown("""
+        <div style='text-align: right;'>
+            <a download='image_analysis_results.xlsx' href='data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{}' target='_blank'>
+                <button style='font-size:16px;padding:10px 20px;'>📥 Download Analysis (Excel)</button>
+            </a>
+        </div>
+    """.format(base64.b64encode(excel_buffer.read()).decode()), unsafe_allow_html=True)

@@ -36,7 +36,7 @@ jobs:
 
             # Restart Streamlit app (using nohup here)
             pkill streamlit || true
-            python -m streamlit run app.py --server.port 8502 --server.enableCORS=false --server.enableXsrfProtection=false
-            # nohup streamlit run app.py --server.port 8502 > output.log 2>&1 &
+            # python -m streamlit run app.py --server.port 8502 --server.enableCORS=false --server.enableXsrfProtection=false
+            nohup streamlit run app.py --server.port 8502 > output.log 2>&1 &
             # nohup streamlit run app.py --server.port 8502 --server.headless true > streamlit.log 2>&1 &
           EOF

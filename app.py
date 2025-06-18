@@ -8,13 +8,29 @@ import time
 import pandas as pd
 import openai
 from dotenv import load_dotenv
-load_dotenv()
+import logging
+
+# --- Configure Logging ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()  # Optional: Also log to console
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Log application start
+logger.info("Starting PDF Image Analyzer application")
 
 # --- API Key Handling ---
 def get_openai_api_key():
     env_key = os.getenv("OPENAI_API_KEY")
     if env_key:
+        logger.info("API key retrieved from environment variable")
         return env_key
+    logger.info("API key retrieved from session state input")
     return st.session_state.api_key_input_value
 
 # --- Session State Initialization ---
@@ -23,6 +39,7 @@ for key in [
     'api_key_input_value', 'custom_prompt']:
     if key not in st.session_state:
         st.session_state[key] = [] if 'results' in key or 'images' in key else ""
+        logger.debug(f"Initialized session state key: {key}")
 
 # --- Default Prompt ---
 DEFAULT_PROMPT = (
@@ -36,9 +53,12 @@ DEFAULT_PROMPT = (
 @st.cache_data
 def extract_images_for_analysis(pdf_bytes):
     extracted_data = []
+    logger.info("Starting image extraction from PDF")
     try:
         pdf_file = fitz.open(stream=pdf_bytes, filetype="pdf")
+        logger.info(f"Opened PDF with {len(pdf_file)} pages")
     except Exception as e:
+        logger.error(f"Error opening PDF: {e}")
         st.error(f"Error opening PDF: {e}")
         return []
 
@@ -46,6 +66,7 @@ def extract_images_for_analysis(pdf_bytes):
         page = pdf_file[page_number]
         images = page.get_images(full=True)
         if not images:
+            logger.info(f"No images found on page {page_number + 1}")
             continue
 
         for img_index, img in enumerate(images):
@@ -65,20 +86,26 @@ def extract_images_for_analysis(pdf_bytes):
                     'image_bytes': image_bytes,
                     'mime_type': mime_type
                 })
+                logger.info(f"Extracted image {img_index + 1} from page {page_number + 1}")
             except Exception as e:
+                logger.error(f"Error processing image {img_index + 1} on page {page_number + 1}: {e}")
                 st.error(f"Error processing image {img_index + 1} on page {page_number + 1}: {e}")
 
     pdf_file.close()
+    logger.info("PDF processing completed")
     return extracted_data
 
 # --- OpenAI Vision Analysis ---
 def get_image_description_from_openai(image_bytes, prompt_text, api_key, identifier=""):
     if not api_key:
-        return "ERROR: OpenAI API Key not provided."
+        logger.error(f"API key not provided for {identifier}")
+        return "ERROR: OpenAI API Key not provided.", ""
     if not prompt_text:
-        return "ERROR: Analysis prompt cannot be empty."
+        logger.error(f"Prompt text empty for {identifier}")
+        return "ERROR: Analysis prompt cannot be empty.", ""
 
     openai.api_key = api_key
+    logger.info(f"Starting OpenAI analysis for {identifier}")
 
     try:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
@@ -100,6 +127,7 @@ def get_image_description_from_openai(image_bytes, prompt_text, api_key, identif
         )
 
         full_content = response.choices[0].message.content.strip()
+        logger.info(f"OpenAI analysis completed for {identifier}")
 
         # Extract summary if available
         summary_marker = "Summary:"
@@ -114,12 +142,14 @@ def get_image_description_from_openai(image_bytes, prompt_text, api_key, identif
         return long_text, summary_text
 
     except Exception as e:
+        logger.error(f"OpenAI error for {identifier}: {e}")
         return f"OpenAI error for {identifier}: {e}", ""
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="PDF Image Analyzer with OpenAI GPT-4.1-mini", page_icon="📄", layout="wide")
-st.title("📄 PDF Image Analyzer with OpenAI GPT-4.1-mini")
+st.title("📄 PDF Image Analyzer with OpenAI GPT-4.1")
 st.markdown("Upload a PDF to extract images and get detailed descriptions using OpenAI's vision model.")
+logger.info("Streamlit UI initialized")
 
 excel_download_placeholder = st.empty()
 
@@ -130,6 +160,7 @@ with st.sidebar:
                                   value=st.session_state.api_key_input_value,
                                   placeholder="Enter OpenAI API key")
     st.session_state.api_key_input_value = api_key_input
+    logger.debug("API key input updated in sidebar")
 
     st.markdown("### API Key Source")
     current_api_key_check = get_openai_api_key()
@@ -147,14 +178,18 @@ st.session_state.custom_prompt = st.text_area(
     value=st.session_state.custom_prompt or DEFAULT_PROMPT,
     height=150
 )
+logger.debug("Custom prompt updated")
 
 # --- File Upload ---
 uploaded_file = st.file_uploader("📎 Upload a PDF", type="pdf")
+if uploaded_file:
+    logger.info(f"PDF uploaded: {uploaded_file.name}")
 
 if uploaded_file and (uploaded_file.name != st.session_state.uploaded_pdf_name or not st.session_state.extracted_images):
     st.session_state.uploaded_pdf_name = uploaded_file.name
     st.session_state.extracted_images = []
     st.session_state.analysis_results = []
+    logger.info(f"Processing new PDF: {uploaded_file.name}")
 
     current_api_key = get_openai_api_key()
     current_analysis_prompt = st.session_state.custom_prompt
@@ -195,6 +230,7 @@ if uploaded_file and (uploaded_file.name != st.session_state.uploaded_pdf_name o
 
             my_bar.empty()
             st.success("✅ Image analysis complete!")
+            logger.info("Image analysis completed successfully")
 
 # --- Excel Download ---
 if st.session_state.analysis_results:
@@ -210,3 +246,4 @@ if st.session_state.analysis_results:
             </a>
         </div>
     """.format(base64.b64encode(excel_buffer.read()).decode()), unsafe_allow_html=True)
+    logger.info("Excel download link generated")

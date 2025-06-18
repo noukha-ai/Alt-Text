@@ -1,2 +1,4 @@
-        [server]
-        maxUploadSize = 1500 # Example: Set to 1500 MB
+[server]
+maxUploadSize = 1500 # Example: Set to 1500 MB
+enableCORS = false
+enableXsrfProtection = false

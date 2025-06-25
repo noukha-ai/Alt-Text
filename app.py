@@ -7,6 +7,7 @@ import base64
 import time
 import pandas as pd
 import openai
+import logging
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -20,21 +21,23 @@ def get_openai_api_key():
 # --- Session State Initialization ---
 for key in [
     'uploaded_pdf_name', 'extracted_images', 'analysis_results',
-    'api_key_input_value', 'custom_prompt']:
+    'api_key_input_value', 'custom_prompt'
+]:
     if key not in st.session_state:
         st.session_state[key] = [] if 'results' in key or 'images' in key else ""
 
 # --- Default Prompt ---
 DEFAULT_PROMPT = (
     """
-    Analyze the image thoroughly and describe it in a story format. Include details about objects, subjects, actions, and any visible text. Interpret what the image communicates and its significance. Avoid any mention of colors.
-    Also, provide a sharp, concise summary under 300 characters that captures the core message of the image.
+    Carefully analyze the image and describe it in a story-like format. Focus on objects, people, actions, setting, and any visible text. Do NOT describe or reference colors — this is critical. Omit any color terms. 
+
+    Also, include a concise summary under 300 characters that captures the main idea of the image. No color should be mentioned anywhere.
     """
 )
 
 # --- Extract Images from PDF ---
 @st.cache_data
-def extract_images_for_analysis(pdf_bytes):
+def extract_images_for_analysis(pdf_bytes, min_width=100, min_height=100):
     extracted_data = []
     try:
         pdf_file = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -55,6 +58,12 @@ def extract_images_for_analysis(pdf_bytes):
                 image_bytes = base_image["image"]
                 image_ext = (base_image.get("ext") or "").lower()
 
+                image = Image.open(io.BytesIO(image_bytes))
+                width, height = image.size
+
+                if width < min_width or height < min_height:
+                    continue
+
                 mime_type = f"image/{image_ext}" if image_ext else "image/png"
                 if mime_type == "image/jpg":
                     mime_type = "image/jpeg"
@@ -74,9 +83,9 @@ def extract_images_for_analysis(pdf_bytes):
 # --- OpenAI Vision Analysis ---
 def get_image_description_from_openai(image_bytes, prompt_text, api_key, identifier=""):
     if not api_key:
-        return "ERROR: OpenAI API Key not provided."
+        return "ERROR: OpenAI API Key not provided.", ""
     if not prompt_text:
-        return "ERROR: Analysis prompt cannot be empty."
+        return "ERROR: Analysis prompt cannot be empty.", ""
 
     openai.api_key = api_key
 
@@ -101,7 +110,6 @@ def get_image_description_from_openai(image_bytes, prompt_text, api_key, identif
 
         full_content = response.choices[0].message.content.strip()
 
-        # Extract summary if available
         summary_marker = "Summary:"
         if summary_marker in full_content:
             parts = full_content.split(summary_marker, 1)
@@ -118,7 +126,7 @@ def get_image_description_from_openai(image_bytes, prompt_text, api_key, identif
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="PDF Image Analyzer with OpenAI GPT-4.1-mini", page_icon="📄", layout="wide")
-st.title("📄 PDF Image Analyzer with OpenAI GPT-4.1")
+st.title("📄 PDF Image Analyzer with OpenAI GPT-4.1-mini")
 st.markdown("Upload a PDF to extract images and get detailed descriptions using OpenAI's vision model.")
 
 excel_download_placeholder = st.empty()
@@ -139,6 +147,8 @@ with st.sidebar:
         st.info("API Key Source: Manual Input")
     else:
         st.warning("API Key Source: None")
+
+    include_long_text = st.checkbox("Include Long Alt Text", value=True)
 
 # --- Prompt Input ---
 st.subheader("📝 Analysis Prompt")
@@ -172,9 +182,16 @@ if uploaded_file and (uploaded_file.name != st.session_state.uploaded_pdf_name o
             for i, item in enumerate(st.session_state.extracted_images):
                 identifier = f"Page {item['page_number']} Image {item['image_index']}"
 
-                description_long, description_short = get_image_description_from_openai(
-                    item['image_bytes'], current_analysis_prompt, current_api_key, identifier
-                )
+                if include_long_text:
+                    description_long, description_short = get_image_description_from_openai(
+                        item['image_bytes'], current_analysis_prompt, current_api_key, identifier
+                    )
+                else:
+                    short_prompt = "Summarize the content of the image in under 300 characters. Avoid color descriptions."
+                    _, description_short = get_image_description_from_openai(
+                        item['image_bytes'], short_prompt, current_api_key, identifier
+                    )
+                    description_long = ""
 
                 st.session_state.analysis_results.append({
                     'Page Number': item['page_number'],
@@ -189,7 +206,8 @@ if uploaded_file and (uploaded_file.name != st.session_state.uploaded_pdf_name o
                     st.image(item['image_bytes'], caption=identifier, use_container_width=True)
                 with right_col:
                     st.markdown(f"**Short Alt Text:** {description_short}")
-                    st.markdown(f"**Long Alt Text:** {description_long}")
+                    if include_long_text and description_long:
+                        st.markdown(f"**Long Alt Text:** {description_long}")
 
                 time.sleep(0.4)
 
@@ -198,7 +216,16 @@ if uploaded_file and (uploaded_file.name != st.session_state.uploaded_pdf_name o
 
 # --- Excel Download ---
 if st.session_state.analysis_results:
-    df = pd.DataFrame(st.session_state.analysis_results)
+    if include_long_text:
+        df = pd.DataFrame(st.session_state.analysis_results)
+    else:
+        df = pd.DataFrame([
+            {
+                'Page Number': r['Page Number'],
+                'Alt Short Text': r['Alt Short Text']
+            } for r in st.session_state.analysis_results
+        ])
+
     excel_buffer = io.BytesIO()
     df.to_excel(excel_buffer, index=False)
     excel_buffer.seek(0)
